@@ -193,7 +193,22 @@
     }
   });
 
-  if (!enHaut) return;
+  // Une fois le lecteur activé, les touches arrivent dans son cadre : on les renvoie à la page principale.
+  if (!enHaut) {
+    var RELAYEES = { 13: 1, 27: 1, 37: 1, 38: 1, 39: 1, 40: 1, 19: 1, 412: 1, 415: 1, 417: 1, 10009: 1, 10252: 1 };
+    var relayer = function (sensTouche) {
+      return function (e) {
+        var el = document.activeElement;
+        if (!RELAYEES[e.keyCode] || (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA'))) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        window.top.postMessage({ asTv: 'touche', sens: sensTouche, code: e.keyCode, repetition: e.repeat }, '*');
+      };
+    };
+    window.addEventListener('keydown', relayer('bas'), true);
+    window.addEventListener('keyup', relayer('haut'), true);
+    return;
+  }
 
   /* ---------- Page principale : pubs du site ---------- */
 
@@ -208,7 +223,9 @@
   verrouiller(window, 'aclib', new Proxy(inerte, { get: function () { return inerte; } }));
 
   var STYLE =
-    '.ad-content,[data-zone],ins.adsbygoogle{display:none!important}' +
+    '.ad-container,.ad-content,.ad-label,[data-zone],ins.adsbygoogle{display:none!important}' +
+    '#as-info{position:fixed;left:50%;bottom:8vh;transform:translateX(-50%);padding:14px 30px;font-size:30px;font-weight:700;color:#fff;' +
+    'background:rgba(0,0,0,.75);border-radius:12px;z-index:2147483647;pointer-events:none}' +
     '#as-curseur{position:fixed;left:0;top:0;width:30px;height:30px;margin:-15px 0 0 -15px;border-radius:50%;' +
     'background:#fff;border:4px solid #2563eb;pointer-events:none;z-index:2147483647;will-change:transform}' +
     '#as-curseur.discret{opacity:0}' +
@@ -253,7 +270,34 @@
 
   function basculerPlein() {
     var cadre = document.getElementById('playerDF');
-    if (cadre) cadre.classList.toggle('as-plein');
+    if (!cadre) return;
+    var actif = cadre.classList.toggle('as-plein');
+    curseur.classList.toggle('discret', actif);
+  }
+
+  var delaiInfo = null;
+  function signaler(texte) {
+    var info = document.getElementById('as-info');
+    if (!info) {
+      info = document.createElement('div');
+      info.id = 'as-info';
+      document.body.appendChild(info);
+    }
+    info.textContent = texte;
+    info.style.display = 'block';
+    clearTimeout(delaiInfo);
+    delaiInfo = setTimeout(function () { info.style.display = 'none'; }, 900);
+  }
+
+  // En plein écran, les flèches gauche et droite avancent ou reculent de 10 secondes.
+  var dernierSaut = 0;
+  function toucheEnPlein(code) {
+    if (code !== 37 && code !== 39) return;
+    var maintenant = Date.now();
+    if (maintenant - dernierSaut < 350) return;
+    dernierSaut = maintenant;
+    commandeMedia(code === 37 ? 'recul' : 'avance');
+    signaler(code === 37 ? '- 10 s' : '+ 10 s');
   }
 
   function pleinActif() {
@@ -421,13 +465,25 @@
     if (!el) return;
     if (el.tagName === 'SELECT') { ouvrirListe(el); return; }
     if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') { el.focus(); return; }
+    if (pleinActif()) { commandeMedia('basculer'); return; }
     clicAuPoint(cx, cy);
+    if (el.id === 'playerDF') basculerPlein();
   }
 
   function retour() {
     if (pleinActif()) { basculerPlein(); return; }
     if (history.length > 1) { history.back(); return; }
     try { window.tizen.application.getCurrentApplication().exit(); } catch (e) { window.close(); }
+  }
+
+  function traiterTouche(code, repetition) {
+    if (liste) touchesListe(code);
+    else if (TOUCHES[code]) { if (pleinActif()) toucheEnPlein(code); else demarrer(code, repetition); }
+    else if (code === 13) valider();
+    else if (code === 10009 || code === 27) retour();
+    else if (MEDIAS[code]) commandeMedia(MEDIAS[code]);
+    else return false;
+    return true;
   }
 
   window.addEventListener('keydown', function (e) {
@@ -437,14 +493,7 @@
       if (code === 65376 || code === 65385 || code === 10009) document.activeElement.blur();
       return;
     }
-    var geree = true;
-    if (liste) touchesListe(code);
-    else if (TOUCHES[code]) demarrer(code, e.repeat);
-    else if (code === 13) valider();
-    else if (code === 10009 || code === 27) retour();
-    else if (MEDIAS[code]) commandeMedia(MEDIAS[code]);
-    else geree = false;
-    if (geree) {
+    if (traiterTouche(code, e.repeat)) {
       e.preventDefault();
       e.stopImmediatePropagation();
     }
@@ -457,6 +506,14 @@
       e.stopImmediatePropagation();
     }
   }, true);
+
+  // Touches renvoyées par le cadre du lecteur.
+  window.addEventListener('message', function (e) {
+    var m = e.data;
+    if (!m || m.asTv !== 'touche') return;
+    if (m.sens === 'bas') traiterTouche(m.code, m.repetition);
+    else if (TOUCHES[m.code] && !liste) relacher(m.code);
+  });
 
   // Le script peut arriver avant le document lui-même : on observe donc la racine, toujours présente.
   var prevu = false;
