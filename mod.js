@@ -155,8 +155,7 @@
   var STYLE =
     '.ad-content,[data-zone],ins.adsbygoogle{display:none!important}' +
     '#as-curseur{position:fixed;left:0;top:0;width:30px;height:30px;margin:-15px 0 0 -15px;border-radius:50%;' +
-    'background:rgba(255,255,255,.9);border:4px solid #2563eb;box-shadow:0 0 12px rgba(0,0,0,.7);' +
-    'pointer-events:none;z-index:2147483647;transition:opacity .2s}' +
+    'background:#fff;border:4px solid #2563eb;pointer-events:none;z-index:2147483647;will-change:transform}' +
     '#as-curseur.discret{opacity:0}' +
     '#as-plein{display:block;margin:12px auto;padding:14px 28px;font-size:22px;font-weight:700;color:#fff;' +
     'background:#2563eb;border:0;border-radius:10px}' +
@@ -213,24 +212,31 @@
   curseur.id = 'as-curseur';
   var cx = Math.round(window.innerWidth / 2);
   var cy = Math.round(window.innerHeight / 2);
-  var dernierAppui = 0;
-  var vitesse = 12;
   var delaiDiscret = null;
   var survole = null;
+  var sens = { x: 0, y: 0 };
+  var boucle = null;
+  var debut = 0;
+  var precedent = 0;
+  var dernierAppui = 0;
+  var cibleDefilement;
 
   function placerCurseur() {
-    curseur.style.transform = 'translate(' + cx + 'px,' + cy + 'px)';
+    curseur.style.transform = 'translate3d(' + Math.round(cx) + 'px,' + Math.round(cy) + 'px,0)';
     curseur.classList.remove('discret');
     clearTimeout(delaiDiscret);
     // Le curseur ne s'efface que pendant la vidéo en plein écran.
     if (pleinActif()) delaiDiscret = setTimeout(function () { curseur.classList.add('discret'); }, 4000);
+  }
+
+  // Le survol passe par elementFromPoint, coûteux : seulement quand le curseur s'arrête.
+  function survoler() {
     var el = document.elementFromPoint(cx, cy);
-    if (el && el !== survole) {
-      survole = el;
-      if (el.tagName !== 'IFRAME') {
-        declencher(el, 'mouseover', cx, cy);
-        declencher(el, 'mousemove', cx, cy);
-      }
+    if (!el || el === survole) return;
+    survole = el;
+    if (el.tagName !== 'IFRAME') {
+      declencher(el, 'mouseover', cx, cy);
+      declencher(el, 'mousemove', cx, cy);
     }
   }
 
@@ -245,24 +251,59 @@
   }
 
   function defiler(dx, dy) {
-    var cible = defilable(document.elementFromPoint(cx, cy), dx, dy);
-    if (cible) cible.scrollBy(dx, dy); else window.scrollBy(dx, dy);
+    if (cibleDefilement === undefined) cibleDefilement = defilable(document.elementFromPoint(cx, cy), dx, dy);
+    (cibleDefilement || window).scrollBy({ left: dx, top: dy, behavior: 'instant' });
   }
 
-  function deplacer(dx, dy) {
-    var maintenant = Date.now();
-    vitesse = maintenant - dernierAppui < 220 ? Math.min(vitesse + 6, 60) : 12;
-    dernierAppui = maintenant;
-    cx += dx * vitesse;
-    cy += dy * vitesse;
+  function arreter() {
+    sens.x = 0;
+    sens.y = 0;
+    cibleDefilement = undefined;
+    boucle = null;
+    survoler();
+  }
+
+  function avancer(t) {
+    if ((!sens.x && !sens.y) || t - dernierAppui > 1000) { arreter(); return; }
+    var dt = Math.min(t - precedent, 50);
+    precedent = t;
+    // Pixels par milliseconde : précis au début, rapide quand on maintient la touche.
+    var v = Math.min(0.3 + (t - debut) / 800, 1.6);
+    cx += sens.x * v * dt;
+    cy += sens.y * v * dt;
     var marge = 40;
     var w = window.innerWidth;
     var h = window.innerHeight;
-    if (cx < marge) { defiler(-vitesse * 3, 0); cx = marge; }
-    if (cx > w - marge) { defiler(vitesse * 3, 0); cx = w - marge; }
-    if (cy < marge) { defiler(0, -vitesse * 3); cy = marge; }
-    if (cy > h - marge) { defiler(0, vitesse * 3); cy = h - marge; }
+    if (cx < marge) { defiler(-v * dt * 2, 0); cx = marge; }
+    if (cx > w - marge) { defiler(v * dt * 2, 0); cx = w - marge; }
+    if (cy < marge) { defiler(0, -v * dt * 2); cy = marge; }
+    if (cy > h - marge) { defiler(0, v * dt * 2); cy = h - marge; }
     placerCurseur();
+    boucle = requestAnimationFrame(avancer);
+  }
+
+  function demarrer(code, repetition) {
+    var maintenant = performance.now();
+    dernierAppui = maintenant;
+    if (repetition && boucle) return;
+    var d = TOUCHES[code];
+    if (d[0]) sens.x = d[0];
+    if (d[1]) sens.y = d[1];
+    // Un appui bref déplace quand même le curseur de quelques pixels.
+    cx += d[0] * 10;
+    cy += d[1] * 10;
+    placerCurseur();
+    if (!boucle) {
+      debut = maintenant;
+      precedent = maintenant;
+      boucle = requestAnimationFrame(avancer);
+    }
+  }
+
+  function relacher(code) {
+    var d = TOUCHES[code];
+    if (d[0]) sens.x = 0;
+    if (d[1]) sens.y = 0;
   }
 
   /* ---------- Page principale : listes déroulantes (épisodes, lecteurs) ---------- */
@@ -343,7 +384,7 @@
     }
     var geree = true;
     if (liste) touchesListe(code);
-    else if (TOUCHES[code]) deplacer(TOUCHES[code][0], TOUCHES[code][1]);
+    else if (TOUCHES[code]) demarrer(code, e.repeat);
     else if (code === 13) valider();
     else if (code === 10009 || code === 27) retour();
     else if (MEDIAS[code]) commandeMedia(MEDIAS[code]);
@@ -354,7 +395,20 @@
     }
   }, true);
 
+  window.addEventListener('keyup', function (e) {
+    if (TOUCHES[e.keyCode] && !liste && !enSaisie()) {
+      relacher(e.keyCode);
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    }
+  }, true);
+
   // Le script peut arriver avant le document lui-même : on observe donc la racine, toujours présente.
-  new MutationObserver(preparerPage).observe(document, { childList: true, subtree: true });
+  var prevu = false;
+  new MutationObserver(function () {
+    if (prevu) return;
+    prevu = true;
+    setTimeout(function () { prevu = false; preparerPage(); }, 250);
+  }).observe(document, { childList: true, subtree: true });
   preparerPage();
 })();
