@@ -1,0 +1,11 @@
+{
+  "name": "tv-anime-sama",
+  "version": "1.0.0",
+  "description": "Anime-Sama à la télécommande, sans fenêtres de pub.",
+  "packageType": "mods",
+  "appName": "Anime-Sama",
+  "websiteURL": "https://anime-sama.to/",
+  "main": "mod.js",
+  "keys": ["MediaPlayPause", "MediaPlay", "MediaPause", "MediaRewind", "MediaFastForward"],
+  "license": "MIT"
+}

@@ -1,0 +1,354 @@
+/* Anime-Sama sur téléviseur : bloque les fenêtres de pub et permet de naviguer à la télécommande.
+   TizenBrew injecte ce script dans chaque cadre de la page, lecteurs vidéo compris. */
+(function () {
+  'use strict';
+  if (window.__animeSamaTV) return;
+  window.__animeSamaTV = true;
+
+  var enHaut = window.top === window.self;
+
+  function verrouiller(objet, nom, valeur) {
+    try {
+      Object.defineProperty(objet, nom, { value: valeur, writable: false, configurable: false });
+    } catch (e) {
+      try { objet[nom] = valeur; } catch (e2) { /* propriété protégée : on laisse */ }
+    }
+  }
+
+  /* ---------- Fenêtres de pub : dans tous les cadres ---------- */
+
+  function fausseFenetre() {
+    var rien = function () {};
+    return {
+      closed: true, close: rien, focus: rien, blur: rien, postMessage: rien,
+      location: { href: '', replace: rien, assign: rien },
+      document: { write: rien, writeln: rien, close: rien, open: rien }
+    };
+  }
+  verrouiller(window, 'open', function () { return fausseFenetre(); });
+
+  function memeSite(url) {
+    try { return new URL(url, location.href).hostname === location.hostname; } catch (e) { return false; }
+  }
+
+  // Vrai quand le lien sortirait de la page : la pub passe souvent par un lien cliqué par script.
+  function lienInterdit(a) {
+    var href = a.getAttribute('href') || '';
+    if (!href || href.charAt(0) === '#' || /^javascript:/i.test(href)) return false;
+    return !memeSite(href);
+  }
+
+  function ouvertureAilleurs(a) {
+    var cible = (a.getAttribute('target') || '').toLowerCase();
+    return cible && cible !== '_self';
+  }
+
+  document.addEventListener('click', function (e) {
+    var a = e.target && e.target.closest ? e.target.closest('a') : null;
+    if (!a) return;
+    if (lienInterdit(a)) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    } else if (ouvertureAilleurs(a)) {
+      e.preventDefault();
+      location.href = a.href;
+    }
+  }, true);
+
+  var clicLien = HTMLAnchorElement.prototype.click;
+  HTMLAnchorElement.prototype.click = function () {
+    if (lienInterdit(this)) return;
+    if (ouvertureAilleurs(this)) { location.href = this.href; return; }
+    return clicLien.apply(this, arguments);
+  };
+
+  var envoiFormulaire = HTMLFormElement.prototype.submit;
+  HTMLFormElement.prototype.submit = function () {
+    if (this.target && this.target !== '_self') return;
+    return envoiFormulaire.apply(this, arguments);
+  };
+
+  /* ---------- Clics et lecture transmis par la page principale ---------- */
+
+  function declencher(el, type, x, y) {
+    var C = /^pointer/.test(type) && window.PointerEvent ? PointerEvent : MouseEvent;
+    el.dispatchEvent(new C(type, { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, button: 0 }));
+  }
+
+  function cliquerSur(el, x, y) {
+    ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(function (t) { declencher(el, t, x, y); });
+  }
+
+  function trouverVideo() {
+    var videos = document.getElementsByTagName('video');
+    return videos.length ? videos[0] : null;
+  }
+
+  function lancerLecteur() {
+    try { if (window.jwplayer) { window.jwplayer().play(); return true; } } catch (e) { /* autre lecteur */ }
+    var v = trouverVideo();
+    if (v && v.paused) { var p = v.play(); if (p && p.catch) p.catch(function () {}); return true; }
+    return false;
+  }
+
+  function verscadres(message) {
+    var cadres = document.getElementsByTagName('iframe');
+    for (var i = 0; i < cadres.length; i++) {
+      try { cadres[i].contentWindow.postMessage(message, '*'); } catch (e) { /* cadre fermé */ }
+    }
+  }
+
+  function commandeMedia(action) {
+    var v = trouverVideo();
+    if (!v) { verscadres({ asTv: 'media', action: action }); return; }
+    if (action === 'basculer') {
+      if (v.paused) lancerLecteur(); else v.pause();
+    } else if (action === 'lecture') {
+      lancerLecteur();
+    } else if (action === 'pause') {
+      v.pause();
+    } else if (action === 'avance') {
+      v.currentTime = Math.min(v.duration || Infinity, v.currentTime + 10);
+    } else if (action === 'recul') {
+      v.currentTime = Math.max(0, v.currentTime - 10);
+    }
+  }
+
+  function clicAuPoint(x, y) {
+    var el = document.elementFromPoint(x, y);
+    if (!el) return;
+    if (el.tagName === 'IFRAME') {
+      var r = el.getBoundingClientRect();
+      try { el.contentWindow.postMessage({ asTv: 'clic', x: x - r.left, y: y - r.top }, '*'); } catch (e) { /* cadre fermé */ }
+      return;
+    }
+    cliquerSur(el, x, y);
+    return el;
+  }
+
+  window.addEventListener('message', function (e) {
+    var m = e.data;
+    if (!m || typeof m !== 'object' || !m.asTv) return;
+    if (m.asTv === 'clic') {
+      clicAuPoint(m.x, m.y);
+      // Une pub transparente peut couvrir le lecteur : on le relance directement.
+      setTimeout(lancerLecteur, 300);
+    } else if (m.asTv === 'media') {
+      commandeMedia(m.action);
+    }
+  });
+
+  if (!enHaut) return;
+
+  /* ---------- Page principale : pubs du site ---------- */
+
+  // Une pub a réussi à remplacer toute la page : on revient en arrière.
+  if (/^https?:$/.test(location.protocol) && !/(^|\.)anime-sama\./.test(location.hostname) &&
+      !/^(127\.0\.0\.1|localhost)$/.test(location.hostname)) {
+    history.back();
+    return;
+  }
+
+  var inerte = function () {};
+  verrouiller(window, 'aclib', new Proxy(inerte, { get: function () { return inerte; } }));
+
+  var STYLE =
+    '.ad-content,[data-zone],ins.adsbygoogle{display:none!important}' +
+    '#as-curseur{position:fixed;left:0;top:0;width:30px;height:30px;margin:-15px 0 0 -15px;border-radius:50%;' +
+    'background:rgba(255,255,255,.9);border:4px solid #2563eb;box-shadow:0 0 12px rgba(0,0,0,.7);' +
+    'pointer-events:none;z-index:2147483647;transition:opacity .2s}' +
+    '#as-curseur.discret{opacity:0}' +
+    '#as-plein{display:block;margin:12px auto;padding:14px 28px;font-size:22px;font-weight:700;color:#fff;' +
+    'background:#2563eb;border:0;border-radius:10px}' +
+    '#playerDF.as-plein{position:fixed!important;left:0!important;top:0!important;width:100vw!important;' +
+    'height:100vh!important;max-width:none!important;max-height:none!important;z-index:2147483000!important;background:#000}' +
+    '#as-liste{position:fixed;left:50%;top:6vh;bottom:6vh;width:520px;margin-left:-260px;overflow:hidden;' +
+    'background:#111827;border:2px solid #2563eb;border-radius:14px;z-index:2147483646;padding:8px}' +
+    '#as-liste div{padding:12px 18px;font-size:22px;color:#e5e7eb;border-radius:8px;white-space:nowrap;' +
+    'overflow:hidden;text-overflow:ellipsis}' +
+    '#as-liste div.choisi{background:#2563eb;color:#fff}';
+
+  function preparerPage() {
+    if (!document.getElementById('as-style') && document.head) {
+      var s = document.createElement('style');
+      s.id = 'as-style';
+      s.textContent = STYLE;
+      document.head.appendChild(s);
+    }
+    ajouterPleinEcran();
+    if (document.body && !document.getElementById('as-curseur')) {
+      document.body.appendChild(curseur);
+      placerCurseur();
+    }
+  }
+
+  function ajouterPleinEcran() {
+    var cadre = document.getElementById('playerDF');
+    if (!cadre || document.getElementById('as-plein') || !cadre.parentNode) return;
+    var b = document.createElement('button');
+    b.id = 'as-plein';
+    b.type = 'button';
+    b.textContent = 'Plein écran';
+    b.addEventListener('click', basculerPlein);
+    cadre.parentNode.insertBefore(b, cadre);
+  }
+
+  function basculerPlein() {
+    var cadre = document.getElementById('playerDF');
+    if (cadre) cadre.classList.toggle('as-plein');
+  }
+
+  function pleinActif() {
+    var cadre = document.getElementById('playerDF');
+    return !!(cadre && cadre.classList.contains('as-plein'));
+  }
+
+  /* ---------- Page principale : curseur à la télécommande ---------- */
+
+  var curseur = document.createElement('div');
+  curseur.id = 'as-curseur';
+  var cx = Math.round(window.innerWidth / 2);
+  var cy = Math.round(window.innerHeight / 2);
+  var dernierAppui = 0;
+  var vitesse = 12;
+  var delaiDiscret = null;
+  var survole = null;
+
+  function placerCurseur() {
+    curseur.style.transform = 'translate(' + cx + 'px,' + cy + 'px)';
+    curseur.classList.remove('discret');
+    clearTimeout(delaiDiscret);
+    delaiDiscret = setTimeout(function () { curseur.classList.add('discret'); }, 4000);
+    var el = document.elementFromPoint(cx, cy);
+    if (el && el !== survole) {
+      survole = el;
+      if (el.tagName !== 'IFRAME') {
+        declencher(el, 'mouseover', cx, cy);
+        declencher(el, 'mousemove', cx, cy);
+      }
+    }
+  }
+
+  function defilable(el, dx, dy) {
+    while (el && el !== document.body && el !== document.documentElement) {
+      var st = getComputedStyle(el);
+      if (dy && /(auto|scroll)/.test(st.overflowY) && el.scrollHeight > el.clientHeight) return el;
+      if (dx && /(auto|scroll)/.test(st.overflowX) && el.scrollWidth > el.clientWidth) return el;
+      el = el.parentElement;
+    }
+    return null;
+  }
+
+  function defiler(dx, dy) {
+    var cible = defilable(document.elementFromPoint(cx, cy), dx, dy);
+    if (cible) cible.scrollBy(dx, dy); else window.scrollBy(dx, dy);
+  }
+
+  function deplacer(dx, dy) {
+    var maintenant = Date.now();
+    vitesse = maintenant - dernierAppui < 220 ? Math.min(vitesse + 6, 60) : 12;
+    dernierAppui = maintenant;
+    cx += dx * vitesse;
+    cy += dy * vitesse;
+    var marge = 40;
+    var w = window.innerWidth;
+    var h = window.innerHeight;
+    if (cx < marge) { defiler(-vitesse * 3, 0); cx = marge; }
+    if (cx > w - marge) { defiler(vitesse * 3, 0); cx = w - marge; }
+    if (cy < marge) { defiler(0, -vitesse * 3); cy = marge; }
+    if (cy > h - marge) { defiler(0, vitesse * 3); cy = h - marge; }
+    placerCurseur();
+  }
+
+  /* ---------- Page principale : listes déroulantes (épisodes, lecteurs) ---------- */
+
+  var liste = null;
+
+  function ouvrirListe(select) {
+    var panneau = document.createElement('div');
+    panneau.id = 'as-liste';
+    var lignes = [];
+    for (var i = 0; i < select.options.length; i++) {
+      var ligne = document.createElement('div');
+      ligne.textContent = select.options[i].text;
+      panneau.appendChild(ligne);
+      lignes.push(ligne);
+    }
+    document.body.appendChild(panneau);
+    liste = { select: select, panneau: panneau, lignes: lignes, index: Math.max(select.selectedIndex, 0) };
+    marquerListe();
+  }
+
+  function marquerListe() {
+    liste.lignes.forEach(function (l, i) { l.classList.toggle('choisi', i === liste.index); });
+    var l = liste.lignes[liste.index];
+    if (l) liste.panneau.scrollTop = l.offsetTop - liste.panneau.clientHeight / 2;
+  }
+
+  function fermerListe() {
+    if (liste) liste.panneau.remove();
+    liste = null;
+  }
+
+  function touchesListe(code) {
+    if (code === 38) liste.index = Math.max(liste.index - 1, 0);
+    else if (code === 40) liste.index = Math.min(liste.index + 1, liste.lignes.length - 1);
+    else if (code === 13) {
+      var s = liste.select;
+      var i = liste.index;
+      fermerListe();
+      s.selectedIndex = i;
+      s.dispatchEvent(new Event('input', { bubbles: true }));
+      s.dispatchEvent(new Event('change', { bubbles: true }));
+      return;
+    } else if (code === 10009 || code === 27) { fermerListe(); return; } else return;
+    marquerListe();
+  }
+
+  /* ---------- Page principale : touches ---------- */
+
+  var TOUCHES = { 37: [-1, 0], 38: [0, -1], 39: [1, 0], 40: [0, 1] };
+  var MEDIAS = { 10252: 'basculer', 415: 'lecture', 19: 'pause', 412: 'recul', 417: 'avance' };
+
+  function enSaisie() {
+    var el = document.activeElement;
+    return !!(el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable));
+  }
+
+  function valider() {
+    var el = document.elementFromPoint(cx, cy);
+    if (!el) return;
+    if (el.tagName === 'SELECT') { ouvrirListe(el); return; }
+    if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') { el.focus(); return; }
+    clicAuPoint(cx, cy);
+  }
+
+  function retour() {
+    if (pleinActif()) { basculerPlein(); return; }
+    if (history.length > 1) { history.back(); return; }
+    try { window.tizen.application.getCurrentApplication().exit(); } catch (e) { window.close(); }
+  }
+
+  window.addEventListener('keydown', function (e) {
+    var code = e.keyCode;
+    if (enSaisie()) {
+      // Le clavier de la télé garde ses flèches. Terminé et Annuler rendent la main au curseur.
+      if (code === 65376 || code === 65385 || code === 10009) document.activeElement.blur();
+      return;
+    }
+    var geree = true;
+    if (liste) touchesListe(code);
+    else if (TOUCHES[code]) deplacer(TOUCHES[code][0], TOUCHES[code][1]);
+    else if (code === 13) valider();
+    else if (code === 10009 || code === 27) retour();
+    else if (MEDIAS[code]) commandeMedia(MEDIAS[code]);
+    else geree = false;
+    if (geree) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    }
+  }, true);
+
+  new MutationObserver(preparerPage).observe(document.documentElement, { childList: true, subtree: true });
+  preparerPage();
+})();
