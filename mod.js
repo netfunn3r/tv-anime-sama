@@ -3,6 +3,8 @@
 (function () {
   'use strict';
   if (window.__animeSamaTV || typeof HTMLAnchorElement === 'undefined') return;
+  // En revenant à l'accueil ou à TizenBrew, ce script reste actif : il ne doit rien y changer.
+  if (location.protocol === 'file:' || /^(127\.0\.0\.1|localhost)$/.test(location.hostname)) return;
   window.__animeSamaTV = true;
 
   var enHaut = window.top === window.self;
