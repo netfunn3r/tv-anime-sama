@@ -224,6 +224,7 @@
 
   var STYLE =
     '.ad-container,.ad-content,.ad-label,[data-zone],ins.adsbygoogle{display:none!important}' +
+    'html.as-plein-actif #topBtn{display:none!important}' +
     '#as-info{position:fixed;left:50%;bottom:8vh;transform:translateX(-50%);padding:14px 30px;font-size:30px;font-weight:700;color:#fff;' +
     'background:rgba(0,0,0,.75);border-radius:12px;z-index:2147483647;pointer-events:none}' +
     '#as-curseur{position:fixed;left:0;top:0;width:30px;height:30px;margin:-15px 0 0 -15px;border-radius:50%;' +
@@ -273,6 +274,7 @@
     if (!cadre) return;
     var actif = cadre.classList.toggle('as-plein');
     curseur.classList.toggle('discret', actif);
+    document.documentElement.classList.toggle('as-plein-actif', actif);
   }
 
   var delaiInfo = null;
