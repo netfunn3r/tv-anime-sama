@@ -177,6 +177,10 @@
     }
     ajouterPleinEcran();
     if (document.body && !document.getElementById('as-curseur')) {
+      if (!cx || !cy) {
+        cx = Math.round(window.innerWidth / 2);
+        cy = Math.round(window.innerHeight / 2);
+      }
       document.body.appendChild(curseur);
       placerCurseur();
     }
@@ -218,7 +222,8 @@
     curseur.style.transform = 'translate(' + cx + 'px,' + cy + 'px)';
     curseur.classList.remove('discret');
     clearTimeout(delaiDiscret);
-    delaiDiscret = setTimeout(function () { curseur.classList.add('discret'); }, 4000);
+    // Le curseur ne s'efface que pendant la vidéo en plein écran.
+    if (pleinActif()) delaiDiscret = setTimeout(function () { curseur.classList.add('discret'); }, 4000);
     var el = document.elementFromPoint(cx, cy);
     if (el && el !== survole) {
       survole = el;
@@ -349,6 +354,7 @@
     }
   }, true);
 
-  new MutationObserver(preparerPage).observe(document.documentElement, { childList: true, subtree: true });
+  // Le script peut arriver avant le document lui-même : on observe donc la racine, toujours présente.
+  new MutationObserver(preparerPage).observe(document, { childList: true, subtree: true });
   preparerPage();
 })();
