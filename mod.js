@@ -476,8 +476,12 @@
 
   function retour() {
     if (pleinActif()) { basculerPlein(); return; }
-    if (history.length > 1) { history.back(); return; }
-    try { window.tizen.application.getCurrentApplication().exit(); } catch (e) { window.close(); }
+    // Depuis la page d'accueil du site, Retour ramène à l'application Accueil, sans quitter TizenBrew.
+    if (location.pathname === '/') {
+      fetch('http://127.0.0.1:8001/api/v2/applications/AccueilTV1.Accueil', { method: 'POST', mode: 'no-cors' }).catch(function () {});
+      return;
+    }
+    history.back();
   }
 
   function traiterTouche(code, repetition) {
