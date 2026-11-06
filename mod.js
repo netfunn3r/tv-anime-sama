@@ -478,7 +478,7 @@
     if (pleinActif()) { basculerPlein(); return; }
     // Depuis la page d'accueil du site, Retour ramène à l'application Accueil, sans quitter TizenBrew.
     if (location.pathname === '/') {
-      fetch('http://127.0.0.1:8001/api/v2/applications/AccueilTV1.Accueil', { method: 'POST', mode: 'no-cors' }).catch(function () {});
+      fetch('http://127.0.0.1:8099/accueil', { mode: 'no-cors' }).catch(function () {});
       return;
     }
     history.back();
