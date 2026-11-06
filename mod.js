@@ -2,7 +2,7 @@
    TizenBrew injecte ce script dans chaque cadre de la page, lecteurs vidéo compris. */
 (function () {
   'use strict';
-  if (window.__animeSamaTV) return;
+  if (window.__animeSamaTV || typeof HTMLAnchorElement === 'undefined') return;
   window.__animeSamaTV = true;
 
   var enHaut = window.top === window.self;
@@ -25,7 +25,44 @@
       document: { write: rien, writeln: rien, close: rien, open: rien }
     };
   }
-  verrouiller(window, 'open', function () { return fausseFenetre(); });
+  var ouvrir = function () { return fausseFenetre(); };
+  verrouiller(window, 'open', ouvrir);
+
+  // Une pub peut passer par un cadre tout neuf, dont window.open n'est pas encore neutralisé.
+  var descFenetre = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'contentWindow');
+  var lireFenetre = descFenetre && descFenetre.get;
+
+  function neutraliser(cadre) {
+    try {
+      var w = lireFenetre ? lireFenetre.call(cadre) : cadre.contentWindow;
+      if (w && w.open !== ouvrir) verrouiller(w, 'open', ouvrir);
+    } catch (e) { /* cadre d'un autre site : le script y est injecté à part */ }
+  }
+
+  if (lireFenetre) {
+    Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', {
+      configurable: true,
+      enumerable: true,
+      get: function () { neutraliser(this); return lireFenetre.call(this); }
+    });
+  }
+
+  function surveillerAjouts(proto, nom) {
+    var origine = proto[nom];
+    if (!origine) return;
+    proto[nom] = function () {
+      var resultat = origine.apply(this, arguments);
+      for (var i = 0; i < arguments.length; i++) {
+        var n = arguments[i];
+        if (n && n.tagName === 'IFRAME') neutraliser(n);
+      }
+      return resultat;
+    };
+  }
+  surveillerAjouts(Node.prototype, 'appendChild');
+  surveillerAjouts(Node.prototype, 'insertBefore');
+  surveillerAjouts(Element.prototype, 'append');
+  surveillerAjouts(Element.prototype, 'prepend');
 
   function memeSite(url) {
     try { return new URL(url, location.href).hostname === location.hostname; } catch (e) { return false; }
@@ -55,6 +92,13 @@
     }
   }, true);
 
+  // Un lien hors de la page peut être cliqué par script sans passer par le document.
+  var envoyerEvenement = EventTarget.prototype.dispatchEvent;
+  EventTarget.prototype.dispatchEvent = function (ev) {
+    if (ev && ev.type === 'click' && this instanceof HTMLAnchorElement && lienInterdit(this)) return false;
+    return envoyerEvenement.call(this, ev);
+  };
+
   var clicLien = HTMLAnchorElement.prototype.click;
   HTMLAnchorElement.prototype.click = function () {
     if (lienInterdit(this)) return;
@@ -66,6 +110,17 @@
   HTMLFormElement.prototype.submit = function () {
     if (this.target && this.target !== '_self') return;
     return envoiFormulaire.apply(this, arguments);
+  };
+
+  /* ---------- Lecteur JW sur téléviseur ---------- */
+
+  // Au premier clic, JW recharge la vidéo. Le flux hls.js déjà attaché devient alors invalide
+  // (Format error) et le lecteur charge sans fin : on ignore ce rechargement-là.
+  var chargerMedia = HTMLMediaElement.prototype.load;
+  HTMLMediaElement.prototype.load = function () {
+    var src = this.getAttribute('src') || '';
+    if (src.indexOf('blob:') === 0 && this.readyState > 0) return;
+    return chargerMedia.apply(this, arguments);
   };
 
   /* ---------- Clics et lecture transmis par la page principale ---------- */
